@@ -1,0 +1,14 @@
+I want to build a mobile app to track my expenses on Samsung (Android). Please create a working app. 
+1. Create an `Expense` data model with: ID, Date, Category (string), Details, and Amount (double).
+2. Create a main screen with a BottomNavigationBar containing three tabs: 'Dashboard', 'Add Expense' and "Categories"
+3 On 'Categories' screen, allow me to add a new category via a text field, delete a category via a trash icon, and edit a category name via an edit icon (open a dialog for editing).
+4 **Crucial Logic:** If I edit a category name (e.g., 'Food' to 'Groceries'), you must write a function that loops through all existing expenses and updates their category to the new name so I don't lose my data grouping. 
+5 Make sure the dropdown in the 'Add Expense' tab dynamically updates if I change the categories."
+6. In the 'Add Expense' tab, build a form to input the amount, details, a dropdown for category, and a date picker that defaults to today. When submitted, add it to the list and auto-switch back to the Dashboard.
+7. For the 'Dashboard', Add a SegmentedButton at the top to filter expenses by 'Week', 'Month', or 'Year'.
+8. Below that, add left and right arrow icon buttons to navigate backward and forward in time based on the selected filter (e.g., clicking left on 'Month' goes to the previous month). 
+9. Display the currently viewed period between the arrows (e.g., 'Mar 2026' or 'Mar 30 - Apr 5').
+10 Calculate and display the 'Total Spend' for the currently viewed period.
+11 Instead of listing individual expenses, group them and display the total spent per category in a PieGraph."
+12 Save the data to local file so that the data is not lost.
+13 Call the save function every time an expense is added, or a category is added/edited/deleted.
