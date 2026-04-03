@@ -8,10 +8,10 @@ import 'package:fl_chart/fl_chart.dart';
 
 class Expense {
   final String id;
-  final DateTime date;
+  DateTime date;
   String category;
-  final String details;
-  final double amount;
+  String details;
+  double amount;
 
   Expense({
     required this.id,
@@ -214,6 +214,17 @@ class _MyAppState extends State<MyApp> {
                     getFilteredExpensesForDashboard: _getFilteredExpensesForDashboard,
                     getPeriodDisplayText: _getPeriodDisplayText,
                     navigatePeriod: _navigatePeriod,
+                    onEditExpense: (updatedExpense) {
+                      setState(() {
+                        final index = _expenses.indexWhere((e) => e.id == updatedExpense.id);
+                        if (index != -1) _expenses[index] = updatedExpense;
+                      });
+                      _saveData();
+                    },
+                    onDeleteExpense: (expenseId) {
+                      setState(() => _expenses.removeWhere((e) => e.id == expenseId));
+                      _saveData();
+                    },
                   ),
                   AddExpenseScreen(
                     categories: _categories,
@@ -288,6 +299,8 @@ class DashboardScreen extends StatelessWidget {
   final List<Expense> Function() getFilteredExpensesForDashboard;
   final String Function() getPeriodDisplayText;
   final ValueChanged<int> navigatePeriod;
+  final ValueChanged<Expense> onEditExpense;
+  final ValueChanged<String> onDeleteExpense;
 
   const DashboardScreen({
     super.key,
@@ -299,6 +312,8 @@ class DashboardScreen extends StatelessWidget {
     required this.getFilteredExpensesForDashboard,
     required this.getPeriodDisplayText,
     required this.navigatePeriod,
+    required this.onEditExpense,
+    required this.onDeleteExpense,
   });
 
   @override
@@ -360,7 +375,8 @@ class DashboardScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Expanded(
+          SizedBox(
+            height: 260,
             child: Card(
               elevation: 2,
               child: Padding(
@@ -389,6 +405,145 @@ class DashboardScreen extends StatelessWidget {
                       ),
               ),
             ),
+          ),
+          const SizedBox(height: 8),
+          if (filteredExpenses.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: Text('Expenses', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: ListView.builder(
+                itemCount: filteredExpenses.length,
+                itemBuilder: (context, index) {
+                  // Show newest first
+                  final expense = filteredExpenses[filteredExpenses.length - 1 - index];
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 3),
+                    child: ListTile(
+                      dense: true,
+                      title: Text(expense.details, style: const TextStyle(fontWeight: FontWeight.w500)),
+                      subtitle: Text('${expense.category} · ${DateFormat('dd MMM yyyy').format(expense.date)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(expense.amount),
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                            onPressed: () => _showEditExpenseDialog(context, expense),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                            onPressed: () => _showDeleteExpenseDialog(context, expense),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showEditExpenseDialog(BuildContext context, Expense expense) {
+    final amountController = TextEditingController(text: expense.amount.toString());
+    final detailsController = TextEditingController(text: expense.details);
+    String selectedCategory = expense.category;
+    DateTime selectedDate = expense.date;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Edit Expense'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'Amount (Rs.)', border: OutlineInputBorder()),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: detailsController,
+                  decoration: const InputDecoration(labelText: 'Details', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: categories.contains(selectedCategory) ? selectedCategory : categories.first,
+                  decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
+                  items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (val) => setDialogState(() => selectedCategory = val ?? selectedCategory),
+                  isExpanded: true,
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  title: const Text('Date'),
+                  subtitle: Text(DateFormat('yyyy-MM-dd').format(selectedDate)),
+                  trailing: const Icon(Icons.calendar_today),
+                  shape: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2101),
+                    );
+                    if (picked != null) setDialogState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                final newAmount = double.tryParse(amountController.text);
+                if (newAmount == null || newAmount <= 0) return;
+                if (detailsController.text.trim().isEmpty) return;
+                onEditExpense(Expense(
+                  id: expense.id,
+                  date: selectedDate,
+                  category: selectedCategory,
+                  details: detailsController.text.trim(),
+                  amount: newAmount,
+                ));
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDeleteExpenseDialog(BuildContext context, Expense expense) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Expense'),
+        content: Text('Delete "${expense.details}" (Rs.${expense.amount.toStringAsFixed(0)})?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              onDeleteExpense(expense.id);
+              Navigator.of(ctx).pop();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
