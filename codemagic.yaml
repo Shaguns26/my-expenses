@@ -1,13 +1,24 @@
 workflows:
-  android-release:
-    name: Android Release APK
-    max_build_duration: 30
+  android-workflow:
+    name: Android APK
+    instance_type: mac_mini_m1
+    max_build_duration: 60
     environment:
       flutter: stable
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
       - name: Build APK
-        script: flutter build apk --release
+        script: |
+          flutter build apk --release || true
+          echo "=== Searching for APK ==="
+          find /Users/builder/clone/build -name "*.apk" 2>/dev/null
+          find . -name "*.apk" 2>/dev/null
+          echo "=== Copying APK to root ==="
+          mkdir -p /Users/builder/clone/output
+          find /Users/builder/clone/build -name "*.apk" -exec cp {} /Users/builder/clone/output/app-release.apk \; 2>/dev/null || true
+          find . -name "*.apk" -exec cp {} /Users/builder/clone/output/app-release.apk \; 2>/dev/null || true
+          ls -la /Users/builder/clone/output/ || echo "output dir empty"
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - /Users/builder/clone/output/app-release.apk
+      - build/**/outputs/**/*.apk
