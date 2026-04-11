@@ -6,6 +6,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+// ─────────────────────────────────────────
+//  Model
+// ─────────────────────────────────────────
 class Expense {
   final String id;
   DateTime date;
@@ -21,27 +24,26 @@ class Expense {
     required this.amount,
   });
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'date': date.toIso8601String(),
-      'category': category,
-      'details': details,
-      'amount': amount,
-    };
-  }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'date': date.toIso8601String(),
+        'category': category,
+        'details': details,
+        'amount': amount,
+      };
 
-  factory Expense.fromJson(Map<String, dynamic> json) {
-    return Expense(
-      id: json['id'],
-      date: DateTime.parse(json['date']),
-      category: json['category'],
-      details: json['details'],
-      amount: json['amount'],
-    );
-  }
+  factory Expense.fromJson(Map<String, dynamic> json) => Expense(
+        id: json['id'],
+        date: DateTime.parse(json['date']),
+        category: json['category'],
+        details: json['details'],
+        amount: (json['amount'] as num).toDouble(),
+      );
 }
 
+// ─────────────────────────────────────────
+//  Persistence
+// ─────────────────────────────────────────
 class AppFileManager {
   static const String _fileName = 'expense_tracker_data.json';
 
@@ -55,35 +57,24 @@ class AppFileManager {
       final file = await _getLocalFile();
       if (await file.exists()) {
         final contents = await file.readAsString();
-        final Map<String, dynamic> jsonMap = json.decode(contents);
-        return jsonMap;
+        return jsonDecode(contents) as Map<String, dynamic>;
       }
-    } catch (e) {
-      debugPrint("Error reading data: $e");
-    }
-    return {
-      'expenses': [],
-      'categories': ['Food', 'Transport', 'Entertainment', 'Utilities', 'Rent']
-    };
+    } catch (_) {}
+    return {};
   }
 
-  Future<void> writeData(List<Expense> expenses, List<String> categories) async {
+  Future<void> writeData(Map<String, dynamic> data) async {
     try {
       final file = await _getLocalFile();
-      final Map<String, dynamic> data = {
-        'expenses': expenses.map((e) => e.toJson()).toList(),
-        'categories': categories,
-      };
-      await file.writeAsString(json.encode(data));
-    } catch (e) {
-      debugPrint("Error writing data: $e");
-    }
+      await file.writeAsString(jsonEncode(data));
+    } catch (_) {}
   }
 }
 
-void main() {
-  runApp(const MyApp());
-}
+// ─────────────────────────────────────────
+//  App entry
+// ─────────────────────────────────────────
+void main() => runApp(const MyApp());
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
@@ -93,115 +84,161 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  int _selectedIndex = 0;
+  final AppFileManager _fileManager = AppFileManager();
+  final Uuid _uuid = const Uuid();
   final PageController _pageController = PageController();
+
   List<Expense> _expenses = [];
   List<String> _categories = [];
   bool _isLoading = true;
-  final AppFileManager _appFileManager = AppFileManager();
-  final Uuid _uuid = const Uuid();
-  String _currentFilter = 'Month';
+  int _selectedIndex = 0;
+
+  // Dashboard filter state
+  String _currentFilter = 'Monthly';
   DateTime _currentDashboardPeriodStart = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _initData();
+    _loadData();
   }
 
-  Future<void> _initData() async {
-    final data = await _appFileManager.readData();
+  Future<void> _loadData() async {
+    final data = await _fileManager.readData();
     setState(() {
-      _expenses = (data['expenses'] as List).map((e) => Expense.fromJson(e)).toList();
-      _categories = (data['categories'] as List).cast<String>();
-      if (_categories.isEmpty) _categories = ['Miscellaneous'];
+      _expenses = (data['expenses'] as List<dynamic>? ?? [])
+          .map((e) => Expense.fromJson(e as Map<String, dynamic>))
+          .toList();
+      _categories =
+          (data['categories'] as List<dynamic>? ?? []).cast<String>();
+      if (_categories.isEmpty) {
+        _categories = [
+          'Food',
+          'Transport',
+          'Entertainment',
+          'Utilities',
+          'Healthcare',
+          'Miscellaneous'
+        ];
+      }
       _isLoading = false;
     });
   }
 
   Future<void> _saveData() async {
-    await _appFileManager.writeData(_expenses, _categories);
-  }
-
-  void _updateExpenseCategories(String oldCategory, String newCategory) {
-    setState(() {
-      for (var expense in _expenses) {
-        if (expense.category == oldCategory) expense.category = newCategory;
-      }
-      _saveData();
+    await _fileManager.writeData({
+      'expenses': _expenses.map((e) => e.toJson()).toList(),
+      'categories': _categories,
     });
   }
 
   void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-      _pageController.jumpToPage(index);
-    });
+    setState(() => _selectedIndex = index);
+    _pageController.jumpToPage(index);
   }
 
+  // ── Dashboard helpers ──────────────────
   List<Expense> _getFilteredExpensesForDashboard() {
-    DateTime periodStart = _currentDashboardPeriodStart;
-    DateTime normalizedStart;
-    DateTime periodEnd;
-
-    if (_currentFilter == 'Week') {
-      normalizedStart = periodStart.subtract(Duration(days: periodStart.weekday - 1));
-      normalizedStart = DateTime(normalizedStart.year, normalizedStart.month, normalizedStart.day);
-      periodEnd = normalizedStart.add(const Duration(days: 7)).subtract(const Duration(seconds: 1));
-    } else if (_currentFilter == 'Month') {
-      normalizedStart = DateTime(periodStart.year, periodStart.month, 1);
-      periodEnd = DateTime(periodStart.year, periodStart.month + 1, 0)
-          .add(const Duration(days: 1))
-          .subtract(const Duration(seconds: 1));
-    } else {
-      normalizedStart = DateTime(periodStart.year, 1, 1);
-      periodEnd = DateTime(periodStart.year + 1, 1, 1).subtract(const Duration(seconds: 1));
-    }
-
-    return _expenses.where((expense) {
-      return expense.date.isAfter(normalizedStart.subtract(const Duration(seconds: 1))) &&
-             expense.date.isBefore(periodEnd.add(const Duration(seconds: 1)));
+    final now = _currentDashboardPeriodStart;
+    return _expenses.where((e) {
+      switch (_currentFilter) {
+        case 'Weekly':
+          final start =
+              now.subtract(Duration(days: now.weekday - 1));
+          final startDate =
+              DateTime(start.year, start.month, start.day);
+          final endDate = startDate.add(const Duration(days: 6));
+          return !e.date.isBefore(startDate) &&
+              !e.date.isAfter(
+                  endDate.add(const Duration(hours: 23, minutes: 59)));
+        case 'Yearly':
+          return e.date.year == now.year;
+        default: // Monthly
+          return e.date.year == now.year && e.date.month == now.month;
+      }
     }).toList();
+  }
+
+  String _getPeriodDisplayText() {
+    final now = _currentDashboardPeriodStart;
+    switch (_currentFilter) {
+      case 'Weekly':
+        final start =
+            now.subtract(Duration(days: now.weekday - 1));
+        final end = start.add(const Duration(days: 6));
+        return '${DateFormat('MMM d').format(start)} – ${DateFormat('MMM d, y').format(end)}';
+      case 'Yearly':
+        return now.year.toString();
+      default:
+        return DateFormat('MMMM yyyy').format(now);
+    }
   }
 
   void _navigatePeriod(int direction) {
     setState(() {
-      if (_currentFilter == 'Week') {
-        _currentDashboardPeriodStart = _currentDashboardPeriodStart.add(Duration(days: 7 * direction));
-      } else if (_currentFilter == 'Month') {
-        _currentDashboardPeriodStart = DateTime(_currentDashboardPeriodStart.year, _currentDashboardPeriodStart.month + direction, 1);
-      } else {
-        _currentDashboardPeriodStart = DateTime(_currentDashboardPeriodStart.year + direction, 1, 1);
+      switch (_currentFilter) {
+        case 'Weekly':
+          _currentDashboardPeriodStart = _currentDashboardPeriodStart
+              .add(Duration(days: 7 * direction));
+          break;
+        case 'Yearly':
+          _currentDashboardPeriodStart = DateTime(
+              _currentDashboardPeriodStart.year + direction,
+              _currentDashboardPeriodStart.month);
+          break;
+        default:
+          final m = _currentDashboardPeriodStart.month + direction;
+          _currentDashboardPeriodStart = DateTime(
+              _currentDashboardPeriodStart.year + (m < 1 ? -1 : m > 12 ? 1 : 0),
+              m < 1 ? 12 : m > 12 ? 1 : m);
       }
     });
   }
 
-  String _getPeriodDisplayText() {
-    DateTime start = _currentDashboardPeriodStart;
-    if (_currentFilter == 'Week') {
-      DateTime weekStart = start.subtract(Duration(days: start.weekday - 1));
-      DateTime weekEnd = weekStart.add(const Duration(days: 6));
-      return '${DateFormat('MMM dd').format(weekStart)} - ${DateFormat('MMM dd, yyyy').format(weekEnd)}';
-    } else if (_currentFilter == 'Month') {
-      return DateFormat('MMMM yyyy').format(start);
-    } else {
-      return DateFormat('yyyy').format(start);
+  void _updateExpenseCategories(String oldCat, String newCat) {
+    for (var e in _expenses) {
+      if (e.category == oldCat) e.category = newCat;
     }
+  }
+
+  // ── Edit / Delete expense ──────────────
+  void _editExpense(Expense expense, String newDetails, double newAmount,
+      String newCategory, DateTime newDate) {
+    setState(() {
+      expense.details = newDetails;
+      expense.amount = newAmount;
+      expense.category = newCategory;
+      expense.date = newDate;
+    });
+    _saveData();
+  }
+
+  void _deleteExpense(Expense expense) {
+    setState(() => _expenses.remove(expense));
+    _saveData();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Expense Tracker',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
       home: _isLoading
-          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          ? const Scaffold(
+              body: Center(child: CircularProgressIndicator()))
           : Scaffold(
-              appBar: AppBar(title: const Text('Expense Tracker')),
+              appBar: AppBar(
+                title: const Text('Expense Tracker'),
+                backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+              ),
               body: PageView(
                 controller: _pageController,
-                onPageChanged: (index) => setState(() => _selectedIndex = index),
+                onPageChanged: (i) => setState(() => _selectedIndex = i),
                 children: [
+                  // ── Tab 0: Dashboard ────────────────────
                   DashboardScreen(
                     expenses: _expenses,
                     categories: _categories,
@@ -210,22 +247,14 @@ class _MyAppState extends State<MyApp> {
                       _currentFilter = filter;
                       _currentDashboardPeriodStart = DateTime.now();
                     }),
-                    currentDashboardPeriodStart: _currentDashboardPeriodStart,
-                    getFilteredExpensesForDashboard: _getFilteredExpensesForDashboard,
+                    currentDashboardPeriodStart:
+                        _currentDashboardPeriodStart,
+                    getFilteredExpensesForDashboard:
+                        _getFilteredExpensesForDashboard,
                     getPeriodDisplayText: _getPeriodDisplayText,
                     navigatePeriod: _navigatePeriod,
-                    onEditExpense: (updatedExpense) {
-                      setState(() {
-                        final index = _expenses.indexWhere((e) => e.id == updatedExpense.id);
-                        if (index != -1) _expenses[index] = updatedExpense;
-                      });
-                      _saveData();
-                    },
-                    onDeleteExpense: (expenseId) {
-                      setState(() => _expenses.removeWhere((e) => e.id == expenseId));
-                      _saveData();
-                    },
                   ),
+                  // ── Tab 1: Add Expense ───────────────────
                   AddExpenseScreen(
                     categories: _categories,
                     uuidGenerator: _uuid,
@@ -235,39 +264,52 @@ class _MyAppState extends State<MyApp> {
                       _pageController.jumpToPage(0);
                     },
                   ),
+                  // ── Tab 2: Expenses list ─────────────────
+                  ExpensesScreen(
+                    expenses: _expenses,
+                    categories: _categories,
+                    onEditExpense: _editExpense,
+                    onDeleteExpense: _deleteExpense,
+                  ),
+                  // ── Tab 3: Categories ────────────────────
                   CategoriesScreen(
                     categories: _categories,
-                    onAddCategory: (category) {
+                    onAddCategory: (cat) {
                       setState(() {
-                        if (!_categories.contains(category)) {
-                          _categories.add(category);
+                        if (!_categories.contains(cat)) {
+                          _categories.add(cat);
                           _saveData();
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Category "$category" already exists!')),
-                          );
+                            SnackBar(
+                                content: Text(
+                                    'Category "$cat" already exists!')));
                         }
                       });
                     },
-                    onDeleteCategory: (category) {
+                    onDeleteCategory: (cat) {
                       setState(() {
-                        _categories.remove(category);
-                        for (var expense in _expenses) {
-                          if (expense.category == category) expense.category = 'Miscellaneous';
+                        _categories.remove(cat);
+                        for (var e in _expenses) {
+                          if (e.category == cat) {
+                            e.category = 'Miscellaneous';
+                          }
                         }
-                        if (!_categories.contains('Miscellaneous') && _expenses.any((e) => e.category == 'Miscellaneous')) {
+                        if (!_categories.contains('Miscellaneous') &&
+                            _expenses
+                                .any((e) => e.category == 'Miscellaneous')) {
                           _categories.add('Miscellaneous');
                         }
                         _saveData();
                       });
                     },
-                    onEditCategory: (oldCategory, newCategory) {
-                      if (oldCategory == newCategory) return;
+                    onEditCategory: (oldCat, newCat) {
+                      if (oldCat == newCat) return;
                       setState(() {
-                        int index = _categories.indexOf(oldCategory);
-                        if (index != -1) {
-                          _categories[index] = newCategory;
-                          _updateExpenseCategories(oldCategory, newCategory);
+                        final idx = _categories.indexOf(oldCat);
+                        if (idx != -1) {
+                          _categories[idx] = newCat;
+                          _updateExpenseCategories(oldCat, newCat);
                           _saveData();
                         }
                       });
@@ -276,10 +318,16 @@ class _MyAppState extends State<MyApp> {
                 ],
               ),
               bottomNavigationBar: BottomNavigationBar(
+                type: BottomNavigationBarType.fixed,
                 items: const [
-                  BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-                  BottomNavigationBarItem(icon: Icon(Icons.add_circle), label: 'Add Expense'),
-                  BottomNavigationBarItem(icon: Icon(Icons.category), label: 'Categories'),
+                  BottomNavigationBarItem(
+                      icon: Icon(Icons.dashboard), label: 'Dashboard'),
+                  BottomNavigationBarItem(
+                      icon: Icon(Icons.add_circle), label: 'Add Expense'),
+                  BottomNavigationBarItem(
+                      icon: Icon(Icons.list_alt), label: 'Expenses'),
+                  BottomNavigationBarItem(
+                      icon: Icon(Icons.category), label: 'Categories'),
                 ],
                 currentIndex: _selectedIndex,
                 selectedItemColor: Theme.of(context).primaryColor,
@@ -290,6 +338,9 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+// ─────────────────────────────────────────
+//  Tab 0 – Dashboard (pie chart only)
+// ─────────────────────────────────────────
 class DashboardScreen extends StatelessWidget {
   final List<Expense> expenses;
   final List<String> categories;
@@ -299,8 +350,6 @@ class DashboardScreen extends StatelessWidget {
   final List<Expense> Function() getFilteredExpensesForDashboard;
   final String Function() getPeriodDisplayText;
   final ValueChanged<int> navigatePeriod;
-  final ValueChanged<Expense> onEditExpense;
-  final ValueChanged<String> onDeleteExpense;
 
   const DashboardScreen({
     super.key,
@@ -312,17 +361,17 @@ class DashboardScreen extends StatelessWidget {
     required this.getFilteredExpensesForDashboard,
     required this.getPeriodDisplayText,
     required this.navigatePeriod,
-    required this.onEditExpense,
-    required this.onDeleteExpense,
   });
 
   @override
   Widget build(BuildContext context) {
     final filteredExpenses = getFilteredExpensesForDashboard();
-    final double totalSpend = filteredExpenses.fold(0.0, (sum, item) => sum + item.amount);
+    final double totalSpend =
+        filteredExpenses.fold(0.0, (sum, e) => sum + e.amount);
     final Map<String, double> categoryTotals = {};
-    for (var expense in filteredExpenses) {
-      categoryTotals.update(expense.category, (value) => value + expense.amount, ifAbsent: () => expense.amount);
+    for (var e in filteredExpenses) {
+      categoryTotals.update(e.category, (v) => v + e.amount,
+          ifAbsent: () => e.amount);
     }
 
     final List<Color> pieColors = [
@@ -334,216 +383,87 @@ class DashboardScreen extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'Week', label: Text('Week'), icon: Icon(Icons.calendar_view_week)),
-              ButtonSegment(value: 'Month', label: Text('Month'), icon: Icon(Icons.calendar_view_month)),
-              ButtonSegment(value: 'Year', label: Text('Year'), icon: Icon(Icons.calendar_today)),
-            ],
-            selected: {currentFilter},
-            onSelectionChanged: (newSelection) {
-              if (newSelection.isNotEmpty) onFilterChanged(newSelection.first);
-            },
-          ),
-          const SizedBox(height: 16),
+          // Filter row
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: ['Weekly', 'Monthly', 'Yearly'].map((filter) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: ChoiceChip(
+                  label: Text(filter),
+                  selected: currentFilter == filter,
+                  onSelected: (_) => onFilterChanged(filter),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
+          // Period navigation
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              IconButton(icon: const Icon(Icons.arrow_left), onPressed: () => navigatePeriod(-1)),
-              Expanded(
-                child: Text(getPeriodDisplayText(), textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
-              ),
-              IconButton(icon: const Icon(Icons.arrow_right), onPressed: () => navigatePeriod(1)),
+              IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: () => navigatePeriod(-1)),
+              Text(getPeriodDisplayText(),
+                  style: Theme.of(context).textTheme.titleMedium),
+              IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: () => navigatePeriod(1)),
             ],
           ),
-          const SizedBox(height: 16),
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  Text('Total Spend:', style: Theme.of(context).textTheme.titleMedium),
-                  Text(
-                    NumberFormat.currency(symbol: 'Rs.', decimalDigits: 2).format(totalSpend),
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.red),
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(height: 8),
+          // Total spend
+          Text(
+            'Total: ${NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(totalSpend)}',
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            height: 260,
+          // Pie chart
+          Expanded(
             child: Card(
               elevation: 2,
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: categoryTotals.isEmpty
-                    ? Center(child: Text('No expenses for this period. Add some!', style: Theme.of(context).textTheme.titleMedium, textAlign: TextAlign.center))
+                    ? Center(
+                        child: Text(
+                          'No expenses for this period.\nAdd some!',
+                          style: Theme.of(context).textTheme.titleMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      )
                     : PieChart(
                         PieChartData(
                           sections: categoryTotals.entries.map((entry) {
-                            final double percentage = totalSpend > 0 ? (entry.value / totalSpend) * 100 : 0;
-                            final int colorIndex = categoryTotals.keys.toList().indexOf(entry.key) % pieColors.length;
+                            final pct = totalSpend > 0
+                                ? (entry.value / totalSpend) * 100
+                                : 0.0;
+                            final colorIdx =
+                                categoryTotals.keys.toList().indexOf(entry.key) %
+                                    pieColors.length;
                             return PieChartSectionData(
-                              color: pieColors[colorIndex],
+                              color: pieColors[colorIdx],
                               value: entry.value,
-                              title: '${entry.key}\n${NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(entry.value)} (${percentage.toStringAsFixed(0)}%)',
-                              radius: 80,
-                              titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                              titlePositionPercentageOffset: 0.55,
+                              title:
+                                  '${entry.key}\n${NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(entry.value)}\n(${pct.toStringAsFixed(1)}%)',
+                              radius: 130,
+                              titleStyle: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white),
                             );
                           }).toList(),
                           sectionsSpace: 2,
-                          centerSpaceRadius: 40,
-                          startDegreeOffset: -90,
-                          borderData: FlBorderData(show: false),
+                          centerSpaceRadius: 0,
                         ),
                       ),
               ),
             ),
-          ),
-          const SizedBox(height: 8),
-          if (filteredExpenses.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: Text('Expenses', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(height: 4),
-            Expanded(
-              child: ListView.builder(
-                itemCount: filteredExpenses.length,
-                itemBuilder: (context, index) {
-                  // Show newest first
-                  final expense = filteredExpenses[filteredExpenses.length - 1 - index];
-                  return Card(
-                    margin: const EdgeInsets.symmetric(vertical: 3),
-                    child: ListTile(
-                      dense: true,
-                      title: Text(expense.details, style: const TextStyle(fontWeight: FontWeight.w500)),
-                      subtitle: Text('${expense.category} · ${DateFormat('dd MMM yyyy').format(expense.date)}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(expense.amount),
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
-                            onPressed: () => _showEditExpenseDialog(context, expense),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                            onPressed: () => _showDeleteExpenseDialog(context, expense),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  void _showEditExpenseDialog(BuildContext context, Expense expense) {
-    final amountController = TextEditingController(text: expense.amount.toString());
-    final detailsController = TextEditingController(text: expense.details);
-    String selectedCategory = expense.category;
-    DateTime selectedDate = expense.date;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Edit Expense'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: amountController,
-                  decoration: const InputDecoration(labelText: 'Amount (Rs.)', border: OutlineInputBorder()),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: detailsController,
-                  decoration: const InputDecoration(labelText: 'Details', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: categories.contains(selectedCategory) ? selectedCategory : categories.first,
-                  decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
-                  items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (val) => setDialogState(() => selectedCategory = val ?? selectedCategory),
-                  isExpanded: true,
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  title: const Text('Date'),
-                  subtitle: Text(DateFormat('yyyy-MM-dd').format(selectedDate)),
-                  trailing: const Icon(Icons.calendar_today),
-                  shape: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: ctx,
-                      initialDate: selectedDate,
-                      firstDate: DateTime(2000),
-                      lastDate: DateTime(2101),
-                    );
-                    if (picked != null) setDialogState(() => selectedDate = picked);
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () {
-                final newAmount = double.tryParse(amountController.text);
-                if (newAmount == null || newAmount <= 0) return;
-                if (detailsController.text.trim().isEmpty) return;
-                onEditExpense(Expense(
-                  id: expense.id,
-                  date: selectedDate,
-                  category: selectedCategory,
-                  details: detailsController.text.trim(),
-                  amount: newAmount,
-                ));
-                Navigator.of(ctx).pop();
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showDeleteExpenseDialog(BuildContext context, Expense expense) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Expense'),
-        content: Text('Delete "${expense.details}" (Rs.${expense.amount.toStringAsFixed(0)})?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              onDeleteExpense(expense.id);
-              Navigator.of(ctx).pop();
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -551,12 +471,20 @@ class DashboardScreen extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────
+//  Tab 1 – Add Expense
+// ─────────────────────────────────────────
 class AddExpenseScreen extends StatefulWidget {
   final List<String> categories;
-  final ValueChanged<Expense> onAddExpense;
   final Uuid uuidGenerator;
+  final ValueChanged<Expense> onAddExpense;
 
-  const AddExpenseScreen({super.key, required this.categories, required this.onAddExpense, required this.uuidGenerator});
+  const AddExpenseScreen({
+    super.key,
+    required this.categories,
+    required this.uuidGenerator,
+    required this.onAddExpense,
+  });
 
   @override
   State<AddExpenseScreen> createState() => _AddExpenseScreenState();
@@ -564,112 +492,111 @@ class AddExpenseScreen extends StatefulWidget {
 
 class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _amountController = TextEditingController();
-  final TextEditingController _detailsController = TextEditingController();
+  final _amountController = TextEditingController();
+  final _detailsController = TextEditingController();
   String? _selectedCategory;
   DateTime _selectedDate = DateTime.now();
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.categories.isNotEmpty) _selectedCategory = widget.categories.first;
+  void dispose() {
+    _amountController.dispose();
+    _detailsController.dispose();
+    super.dispose();
   }
 
-  bool _isValidCategory(String? category) => category != null && widget.categories.contains(category);
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2101),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
     );
-    if (picked != null && picked != _selectedDate) setState(() => _selectedDate = picked);
+    if (picked != null) setState(() => _selectedDate = picked);
   }
 
   void _submitForm() {
     if (_formKey.currentState!.validate() && _selectedCategory != null) {
-      final newExpense = Expense(
+      widget.onAddExpense(Expense(
         id: widget.uuidGenerator.v4(),
         date: _selectedDate,
         category: _selectedCategory!,
-        details: _detailsController.text,
-        amount: double.parse(_amountController.text),
-      );
-      widget.onAddExpense(newExpense);
+        details: _detailsController.text.trim(),
+        amount: double.parse(_amountController.text.trim()),
+      ));
       _amountController.clear();
       _detailsController.clear();
       setState(() {
+        _selectedCategory = null;
         _selectedDate = DateTime.now();
-        _selectedCategory = widget.categories.isNotEmpty ? widget.categories.first : null;
       });
     }
   }
 
   @override
-  void didUpdateWidget(covariant AddExpenseScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!_isValidCategory(_selectedCategory) && widget.categories.isNotEmpty) {
-      setState(() => _selectedCategory = widget.categories.first);
-    } else if (widget.categories.isEmpty) {
-      setState(() => _selectedCategory = null);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
+    return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Form(
         key: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text('Add New Expense',
+                style: Theme.of(context).textTheme.headlineSmall,
+                textAlign: TextAlign.center),
+            const SizedBox(height: 24),
             TextFormField(
               controller: _amountController,
-              decoration: const InputDecoration(labelText: 'Amount (Rs.)', border: OutlineInputBorder()),
-              keyboardType: TextInputType.number,
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Please enter an amount';
-                if (double.tryParse(value) == null) return 'Please enter a valid number';
-                if (double.parse(value) <= 0) return 'Amount must be positive';
+              decoration: const InputDecoration(
+                  labelText: 'Amount (Rs.)',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.currency_rupee)),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              validator: (v) {
+                if (v == null || v.isEmpty) return 'Please enter an amount';
+                if (double.tryParse(v) == null) return 'Enter a valid number';
+                if (double.parse(v) <= 0) return 'Amount must be positive';
                 return null;
               },
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _detailsController,
-              decoration: const InputDecoration(labelText: 'Details (e.g., Coffee at Starbucks)', border: OutlineInputBorder()),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Please enter details';
-                return null;
-              },
+              decoration: const InputDecoration(
+                  labelText: 'Details',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.notes)),
+              validator: (v) =>
+                  (v == null || v.isEmpty) ? 'Please enter details' : null,
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: _selectedCategory,
-              decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
-              items: widget.categories.map((category) => DropdownMenuItem(value: category, child: Text(category))).toList(),
-              onChanged: (String? newValue) => setState(() => _selectedCategory = newValue),
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Please select a category';
-                return null;
-              },
-              hint: const Text('Select a category'),
-              isExpanded: true,
+              decoration: const InputDecoration(
+                  labelText: 'Category',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.category)),
+              items: widget.categories
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                  .toList(),
+              onChanged: (v) => setState(() => _selectedCategory = v),
+              validator: (v) =>
+                  v == null ? 'Please select a category' : null,
             ),
             const SizedBox(height: 16),
-            ListTile(
-              title: const Text('Date'),
-              subtitle: Text(DateFormat('yyyy-MM-dd').format(_selectedDate)),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: () => _selectDate(context),
-              shape: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
+            OutlinedButton.icon(
+              onPressed: _pickDate,
+              icon: const Icon(Icons.calendar_today),
+              label: Text('Date: ${DateFormat('MMM d, yyyy').format(_selectedDate)}'),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _selectedCategory != null && widget.categories.isNotEmpty ? _submitForm : null,
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), textStyle: const TextStyle(fontSize: 18)),
+              onPressed:
+                  widget.categories.isNotEmpty ? _submitForm : null,
+              style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  textStyle: const TextStyle(fontSize: 18)),
               child: const Text('Add Expense'),
             ),
             if (widget.categories.isEmpty)
@@ -677,7 +604,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 padding: const EdgeInsets.only(top: 8.0),
                 child: Text(
                   'Please add categories in the "Categories" tab first.',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.error),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -688,47 +616,398 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   }
 }
 
+// ─────────────────────────────────────────
+//  Tab 2 – Expenses (view & edit all)
+// ─────────────────────────────────────────
+class ExpensesScreen extends StatefulWidget {
+  final List<Expense> expenses;
+  final List<String> categories;
+  final Function(Expense, String, double, String, DateTime) onEditExpense;
+  final ValueChanged<Expense> onDeleteExpense;
+
+  const ExpensesScreen({
+    super.key,
+    required this.expenses,
+    required this.categories,
+    required this.onEditExpense,
+    required this.onDeleteExpense,
+  });
+
+  @override
+  State<ExpensesScreen> createState() => _ExpensesScreenState();
+}
+
+class _ExpensesScreenState extends State<ExpensesScreen> {
+  String _sortBy = 'Date (Newest)';
+  String _filterCategory = 'All';
+
+  List<Expense> get _displayedExpenses {
+    List<Expense> list = List.from(widget.expenses);
+
+    // category filter
+    if (_filterCategory != 'All') {
+      list = list.where((e) => e.category == _filterCategory).toList();
+    }
+
+    // sort
+    switch (_sortBy) {
+      case 'Date (Oldest)':
+        list.sort((a, b) => a.date.compareTo(b.date));
+        break;
+      case 'Amount (High–Low)':
+        list.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case 'Amount (Low–High)':
+        list.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      default: // Date (Newest)
+        list.sort((a, b) => b.date.compareTo(a.date));
+    }
+    return list;
+  }
+
+  void _showEditDialog(Expense expense) {
+    final amountCtrl =
+        TextEditingController(text: expense.amount.toStringAsFixed(0));
+    final detailsCtrl =
+        TextEditingController(text: expense.details);
+    String selCategory = widget.categories.contains(expense.category)
+        ? expense.category
+        : widget.categories.first;
+    DateTime selDate = expense.date;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text('Edit Expense'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountCtrl,
+                  decoration: const InputDecoration(
+                      labelText: 'Amount (Rs.)',
+                      border: OutlineInputBorder()),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: detailsCtrl,
+                  decoration: const InputDecoration(
+                      labelText: 'Details',
+                      border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selCategory,
+                  decoration: const InputDecoration(
+                      labelText: 'Category',
+                      border: OutlineInputBorder()),
+                  items: widget.categories
+                      .map((c) =>
+                          DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
+                  onChanged: (v) =>
+                      setDlg(() => selCategory = v ?? selCategory),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today, size: 18),
+                  label: Text(
+                      DateFormat('MMM d, yyyy').format(selDate)),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: selDate,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now(),
+                    );
+                    if (picked != null) {
+                      setDlg(() => selDate = picked);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                final amount =
+                    double.tryParse(amountCtrl.text.trim());
+                final details = detailsCtrl.text.trim();
+                if (amount == null || amount <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content:
+                              Text('Please enter a valid amount')));
+                  return;
+                }
+                if (details.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Details cannot be empty')));
+                  return;
+                }
+                widget.onEditExpense(
+                    expense, details, amount, selCategory, selDate);
+                Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text('Expense updated!')));
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDeleteDialog(Expense expense) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Expense'),
+        content: Text(
+            'Delete "${expense.details}" for ${NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(expense.amount)}?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              widget.onDeleteExpense(expense);
+              Navigator.of(ctx).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Expense deleted.')));
+            },
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final displayed = _displayedExpenses;
+    final allCategories = ['All', ...widget.categories];
+    final total = displayed.fold(0.0, (s, e) => s + e.amount);
+
+    return Column(
+      children: [
+        // ── Controls bar ────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(
+            children: [
+              // Category filter
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _filterCategory,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                    border: OutlineInputBorder(),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: allCategories
+                      .map((c) =>
+                          DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
+                  onChanged: (v) =>
+                      setState(() => _filterCategory = v ?? 'All'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Sort
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _sortBy,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Sort',
+                    border: OutlineInputBorder(),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: [
+                    'Date (Newest)',
+                    'Date (Oldest)',
+                    'Amount (High–Low)',
+                    'Amount (Low–High)',
+                  ]
+                      .map((s) =>
+                          DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13))))
+                      .toList(),
+                  onChanged: (v) =>
+                      setState(() => _sortBy = v ?? _sortBy),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ── Summary strip ───────────────────
+        Padding(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('${displayed.length} expense(s)',
+                  style: const TextStyle(color: Colors.grey)),
+              Text(
+                'Total: ${NumberFormat.currency(symbol: 'Rs.', decimalDigits: 0).format(total)}',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // ── List ────────────────────────────
+        Expanded(
+          child: displayed.isEmpty
+              ? const Center(
+                  child: Text('No expenses found.',
+                      style: TextStyle(color: Colors.grey, fontSize: 16)))
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: displayed.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                  itemBuilder: (context, index) {
+                    final expense = displayed[index];
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
+                      leading: CircleAvatar(
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .primaryContainer,
+                        child: Text(
+                          expense.category.isNotEmpty
+                              ? expense.category[0].toUpperCase()
+                              : '?',
+                          style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      title: Text(
+                        expense.details,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                          '${expense.category}  ·  ${DateFormat('MMM d, yyyy').format(expense.date)}',
+                          style: const TextStyle(fontSize: 12)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            NumberFormat.currency(
+                                    symbol: 'Rs.', decimalDigits: 0)
+                                .format(expense.amount),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red,
+                                fontSize: 14),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.edit,
+                                size: 20, color: Colors.blueAccent),
+                            tooltip: 'Edit',
+                            onPressed: () => _showEditDialog(expense),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete,
+                                size: 20, color: Colors.redAccent),
+                            tooltip: 'Delete',
+                            onPressed: () =>
+                                _showDeleteDialog(expense),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────
+//  Tab 3 – Categories
+// ─────────────────────────────────────────
 class CategoriesScreen extends StatefulWidget {
   final List<String> categories;
   final ValueChanged<String> onAddCategory;
   final ValueChanged<String> onDeleteCategory;
-  final Function(String oldCategory, String newCategory) onEditCategory;
+  final Function(String, String) onEditCategory;
 
-  const CategoriesScreen({super.key, required this.categories, required this.onAddCategory, required this.onDeleteCategory, required this.onEditCategory});
+  const CategoriesScreen({
+    super.key,
+    required this.categories,
+    required this.onAddCategory,
+    required this.onDeleteCategory,
+    required this.onEditCategory,
+  });
 
   @override
   State<CategoriesScreen> createState() => _CategoriesScreenState();
 }
 
 class _CategoriesScreenState extends State<CategoriesScreen> {
-  final TextEditingController _newCategoryController = TextEditingController();
+  final TextEditingController _newCategoryController =
+      TextEditingController();
 
-  void _showEditCategoryDialog(BuildContext context, String currentCategory) {
-    final TextEditingController editController = TextEditingController(text: currentCategory);
+  void _showEditCategoryDialog(String current) {
+    final ctrl = TextEditingController(text: current);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Edit Category'),
-        content: TextField(controller: editController, decoration: const InputDecoration(labelText: 'Category Name'), autofocus: true),
+        content: TextField(
+            controller: ctrl,
+            decoration:
+                const InputDecoration(labelText: 'Category Name'),
+            autofocus: true),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
-              final newName = editController.text.trim();
-              if (newName.isNotEmpty) {
-                if (newName != currentCategory) {
-                  if (!widget.categories.contains(newName)) {
-                    widget.onEditCategory(currentCategory, newName);
-                    Navigator.of(ctx).pop();
-                  } else {
-                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('Category "$newName" already exists!')));
-                  }
-                } else {
-                  Navigator.of(ctx).pop();
-                }
-              } else {
-                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Category name cannot be empty!')));
+              final newName = ctrl.text.trim();
+              if (newName.isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                    content: Text('Name cannot be empty!')));
+                return;
               }
+              if (newName != current &&
+                  widget.categories.contains(newName)) {
+                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                    content: Text('"$newName" already exists!')));
+                return;
+              }
+              widget.onEditCategory(current, newName);
+              Navigator.of(ctx).pop();
             },
             child: const Text('Save'),
           ),
@@ -743,29 +1022,29 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
+          Text('Manage Categories',
+              style: Theme.of(context).textTheme.headlineSmall,
+              textAlign: TextAlign.center),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _newCategoryController,
-                  decoration: const InputDecoration(labelText: 'New Category Name', border: OutlineInputBorder()),
-                  onSubmitted: (_) {
-                    if (_newCategoryController.text.trim().isNotEmpty) {
-                      widget.onAddCategory(_newCategoryController.text.trim());
-                      _newCategoryController.clear();
-                    }
-                  },
+                  decoration: const InputDecoration(
+                      labelText: 'New Category',
+                      border: OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 8),
               ElevatedButton(
                 onPressed: () {
-                  if (_newCategoryController.text.trim().isNotEmpty) {
-                    widget.onAddCategory(_newCategoryController.text.trim());
+                  final name = _newCategoryController.text.trim();
+                  if (name.isNotEmpty) {
+                    widget.onAddCategory(name);
                     _newCategoryController.clear();
                   }
                 },
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                 child: const Text('Add'),
               ),
             ],
@@ -773,44 +1052,29 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
           const SizedBox(height: 16),
           Expanded(
             child: widget.categories.isEmpty
-                ? const Center(child: Text('No categories added yet.'))
+                ? const Center(child: Text('No categories yet.'))
                 : ListView.builder(
                     itemCount: widget.categories.length,
                     itemBuilder: (context, index) {
-                      final category = widget.categories[index];
+                      final cat = widget.categories[index];
                       return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
                         child: ListTile(
-                          title: Text(category),
+                          leading: const Icon(Icons.label),
+                          title: Text(cat),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blue),
-                                onPressed: () => _showEditCategoryDialog(context, category),
+                                icon: const Icon(Icons.edit,
+                                    color: Colors.blue),
+                                onPressed: () =>
+                                    _showEditCategoryDialog(cat),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (ctx) => AlertDialog(
-                                      title: const Text('Delete Category'),
-                                      content: Text('Are you sure you want to delete "$category"? Expenses will be re-assigned to "Miscellaneous".'),
-                                      actions: [
-                                        TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-                                        ElevatedButton(
-                                          onPressed: () {
-                                            widget.onDeleteCategory(category);
-                                            Navigator.of(ctx).pop();
-                                          },
-                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                                          child: const Text('Delete', style: TextStyle(color: Colors.white)),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
+                                icon: const Icon(Icons.delete,
+                                    color: Colors.red),
+                                onPressed: () =>
+                                    widget.onDeleteCategory(cat),
                               ),
                             ],
                           ),
